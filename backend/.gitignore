@@ -1,0 +1,24 @@
+# Variables d'environnement
+.env
+.env.*
+!.env.example
+
+# Dépendances
+node_modules/
+vendor/
+
+# Fichiers de build
+dist/
+build/
+
+# Logs
+*.log
+
+# Fichiers système / éditeur
+.DS_Store
+.vscode/
+.idea/
+
+# Fichiers temporaires
+*.tmp
+*.temp

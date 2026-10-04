@@ -16,8 +16,13 @@ class IsEtudiantOrAdmin(permissions.BasePermission):
       return True
     return obj.user == request.user
 
+
 class IsEntrepriseOrAdmin(permissions.BasePermission):
-  """Permet l'accès uniquement aux utilisateurs ayant le rôle ENTREPRISE ou ADMIN."""
+  """Permet l'accès uniquement aux utilisateurs ayant le rôle ENTREPRISE ou ADMIN.
+
+  Au niveau objet, le propriétaire est `obj.user` (ProfilEntreprise)
+  ou `obj.entreprise` (OffreStage).
+  """
 
   def has_permission(self, request, view):
     return (
@@ -29,4 +34,5 @@ class IsEntrepriseOrAdmin(permissions.BasePermission):
   def has_object_permission(self, request, view, obj):
     if request.user.is_staff:
       return True
-    return obj.user == request.user
+    proprietaire = getattr(obj, 'user', None) or getattr(obj, 'entreprise', None)
+    return proprietaire == request.user

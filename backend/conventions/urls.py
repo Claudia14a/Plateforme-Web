@@ -1,6 +1,10 @@
-from django.urls import path
-#from . import views
+from django.urls import include, path
+from rest_framework.routers import SimpleRouter
+from conventions.views import ConventionViewSet
+
+router = SimpleRouter()
+router.register(r'', ConventionViewSet, basename='convention')
 
 urlpatterns = [
-    # tes routes ici
+    path('', include(router.urls)),
 ]

@@ -19,10 +19,14 @@ class User(AbstractUser):
       max_length=20, choices=ROLE_CHOICES, default='ETUDIANT'
   )
 
+  # False à l'inscription publique ; True pour les comptes existants ou créés par un admin
+  email_verifie = models.BooleanField(default=True)
+
   def save(self, *args, **kwargs):
-    # Un superuser (createsuperuser) reçoit automatiquement le rôle ADMIN
     if self.is_superuser and self.role == 'ETUDIANT':
       self.role = 'ADMIN'
+    if self.is_superuser:
+      self.email_verifie = True
     super().save(*args, **kwargs)
 
   def __str__(self):

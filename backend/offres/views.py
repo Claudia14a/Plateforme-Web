@@ -1,11 +1,15 @@
-from django.db.models import Q
+from django.db.models import Count, ProtectedError, Q
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import permissions, viewsets
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.filters import OrderingFilter
+from rest_framework.response import Response
 from offres.filters import OffreStageFilter
 from offres.models import OffreStage
 from offres.serializers import OffreStageDetailSerializer, OffreStageSerializer
-from utilisateurs.permissions import IsEntrepriseOrAdmin
+from utilisateurs.permissions import IsEntreprise, IsEntrepriseOrAdmin
 
 
 def _est_admin(user):
@@ -14,21 +18,28 @@ def _est_admin(user):
 
 class OffreStageViewSet(viewsets.ModelViewSet):
   serializer_class = OffreStageSerializer
-  filter_backends = [DjangoFilterBackend]
+  filter_backends = [DjangoFilterBackend, OrderingFilter]
   filterset_class = OffreStageFilter
+  # Tri : ?ordering=-date_creation | duree_mois | -duree_mois | date_limite
+  ordering_fields = ['date_creation', 'duree_mois', 'date_limite']
+  ordering = ['-date_creation']
 
   def get_queryset(self):
     user = self.request.user
-    qs = OffreStage.objects.select_related(
-        'entreprise__profil_entreprise'
-    ).order_by('-date_creation')
+    qs = (
+        OffreStage.objects.select_related('entreprise__profil_entreprise')
+        .annotate(nb_candidatures=Count('candidatures'))
+        .order_by('-date_creation')
+    )
 
     if _est_admin(user):
       return qs
     if self.action in ('list', 'retrieve'):
-      # Offres actives pour tous + ses propres offres (même clôturées) pour une entreprise
-      return qs.filter(Q(active=True) | Q(entreprise=user))
-    # modifier / clôturer / supprimer : uniquement ses propres offres
+      # Offres ouvertes (actives et non expirées) pour tous
+      # + toutes ses propres offres pour une entreprise
+      visibles = Q(active=True, date_limite__gte=timezone.localdate()) | Q(entreprise=user)
+      return qs.filter(visibles)
+    # mes-offres / modifier / clôturer / supprimer : uniquement ses propres offres
     return qs.filter(entreprise=user)
 
   def get_serializer_class(self):
@@ -40,6 +51,8 @@ class OffreStageViewSet(viewsets.ModelViewSet):
   def get_permissions(self):
     if self.action in ['list', 'retrieve']:
       permission_classes = [permissions.IsAuthenticated]
+    elif self.action == 'mes_offres':
+      permission_classes = [permissions.IsAuthenticated, IsEntreprise]
     else:
       # Seules les entreprises (propriétaires) ou admins peuvent créer/modifier/supprimer
       permission_classes = [permissions.IsAuthenticated, IsEntrepriseOrAdmin]
@@ -62,3 +75,38 @@ class OffreStageViewSet(viewsets.ModelViewSet):
     else:
       # Une entreprise ne peut pas transférer son offre à une autre
       serializer.save(entreprise=serializer.instance.entreprise)
+
+  def destroy(self, request, *args, **kwargs):
+    # Une offre qui a reçu des candidatures ne peut pas être supprimée
+    # (elle fait partie de l'historique des étudiants) : on la clôture à la place.
+    try:
+      return super().destroy(request, *args, **kwargs)
+    except ProtectedError:
+      return Response(
+          {'detail': "Cette offre a reçu des candidatures : clôturez-la au lieu de la supprimer."},
+          status=status.HTTP_409_CONFLICT,
+      )
+
+  @action(detail=False, methods=['get'], url_path='mes-offres')
+  def mes_offres(self, request):
+    """GET /api/offres/offres/mes-offres/ : toutes mes offres (ouvertes et clôturées)."""
+    queryset = self.filter_queryset(self.get_queryset())
+    page = self.paginate_queryset(queryset)
+    serializer = self.get_serializer(page, many=True)
+    return self.get_paginated_response(serializer.data)
+
+  @action(detail=True, methods=['post'])
+  def cloturer(self, request, pk=None):
+    """POST /api/offres/offres/<id>/cloturer/ : l'offre n'accepte plus de candidatures."""
+    offre = self.get_object()
+    offre.active = False
+    offre.save(update_fields=['active'])
+    return Response(self.get_serializer(offre).data)
+
+  @action(detail=True, methods=['post'])
+  def reouvrir(self, request, pk=None):
+    """POST /api/offres/offres/<id>/reouvrir/ : remet l'offre en ligne."""
+    offre = self.get_object()
+    offre.active = True
+    offre.save(update_fields=['active'])
+    return Response(self.get_serializer(offre).data)

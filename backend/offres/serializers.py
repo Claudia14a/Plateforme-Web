@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 from offres.models import OffreStage
 
@@ -54,6 +55,8 @@ class OffreStageSerializer(serializers.ModelSerializer):
       queryset=User.objects.filter(role='ENTREPRISE'), required=False
   )
   entreprise_nom = serializers.SerializerMethodField()
+  # Nombre de candidatures reçues (calculé par la vue ; absent juste après une création)
+  nb_candidatures = serializers.IntegerField(read_only=True)
 
   class Meta:
     model = OffreStage
@@ -70,6 +73,7 @@ class OffreStageSerializer(serializers.ModelSerializer):
         'date_limite',
         'date_creation',
         'active',
+        'nb_candidatures',
     )
     read_only_fields = ('id', 'date_creation')
 
@@ -77,10 +81,22 @@ class OffreStageSerializer(serializers.ModelSerializer):
     profil = _profil(obj.entreprise)
     return profil.nom_entreprise if profil else obj.entreprise.username
 
+  def validate_date_limite(self, value):
+    # À la création, la date limite ne peut pas être déjà passée
+    if self.instance is None and value < timezone.localdate():
+      raise serializers.ValidationError('La date limite ne peut pas être dans le passé.')
+    return value
+
+  def validate_duree_mois(self, value):
+    if value < 1:
+      raise serializers.ValidationError('La durée doit être d\'au moins 1 mois.')
+    return value
+
 
 class OffreStageDetailSerializer(serializers.ModelSerializer):
   entreprise = EntrepriseResumeSerializer(read_only=True)
   entreprise_nom = serializers.SerializerMethodField()
+  nb_candidatures = serializers.IntegerField(read_only=True)
 
   class Meta:
     model = OffreStage
@@ -97,6 +113,7 @@ class OffreStageDetailSerializer(serializers.ModelSerializer):
         'date_limite',
         'date_creation',
         'active',
+        'nb_candidatures',
     )
     read_only_fields = fields
 

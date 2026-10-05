@@ -1,6 +1,24 @@
 from rest_framework import permissions
 
 
+class IsEtudiant(permissions.BasePermission):
+  """Réservé aux comptes ayant le rôle ETUDIANT."""
+
+  def has_permission(self, request, view):
+    return bool(
+        request.user and request.user.is_authenticated and request.user.role == 'ETUDIANT'
+    )
+
+
+class IsEntreprise(permissions.BasePermission):
+  """Réservé aux comptes ayant le rôle ENTREPRISE."""
+
+  def has_permission(self, request, view):
+    return bool(
+        request.user and request.user.is_authenticated and request.user.role == 'ENTREPRISE'
+    )
+
+
 class IsEtudiantOrAdmin(permissions.BasePermission):
   """Permet l'accès uniquement aux utilisateurs ayant le rôle ETUDIANT ou ADMIN."""
 

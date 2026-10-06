@@ -10,6 +10,15 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from utilisateurs.emails import envoyer_email_reinitialisation, envoyer_email_verification
+from utilisateurs.two_factor import (
+    EmailIndisponible,
+    REGISTER,
+    creer_mfa_token,
+    deux_facteurs_actif,
+    envoyer_code,
+    masquer_email,
+    validite_minutes,
+)
 from utilisateurs.models import ProfilEntreprise, ProfilEtudiant, User
 from utilisateurs.permissions import IsEntrepriseOrAdmin, IsEtudiant, IsEtudiantOrAdmin
 from utilisateurs.serializers import (
@@ -19,7 +28,9 @@ from utilisateurs.serializers import (
     ProfilEntrepriseSerializer,
     ProfilEtudiantSerializer,
     RegisterSerializer,
+    Renvoyer2FASerializer,
     UserSerializer,
+    Verify2FASerializer,
     VerifyEmailSerializer,
 )
 
@@ -42,7 +53,12 @@ class EmailRateThrottle(AnonRateThrottle):
 # --------------------------------------------------------------------------
 
 class LoginView(TokenObtainPairView):
-  """POST /api/auth/login/ — {username, password, espace?} -> {access, refresh, user}."""
+  """POST /api/auth/login/ — {username, password, espace?}.
+
+  Avec la double authentification (défaut) : envoie un code par e-mail et répond
+  {requires_2fa: true, mfa_token, email, expires_in}. Les jetons JWT sont délivrés
+  ensuite par POST /api/auth/verify-2fa/.
+  Sans double authentification (TWO_FACTOR_ENABLED=False) : {access, refresh, user}."""
   serializer_class = LoginSerializer
   throttle_classes = [AuthRateThrottle]
 
@@ -59,10 +75,65 @@ class RegisterView(generics.CreateAPIView):
     serializer = self.get_serializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     user = serializer.save()
-    envoyer_email_verification(user)
     data = dict(serializer.data)
-    data['detail'] = "Compte créé. Un e-mail de confirmation vous a été envoyé."
+
+    if deux_facteurs_actif():
+      # Un code à 6 chiffres est envoyé par e-mail ; le compte reste « non vérifié »
+      # tant que le code n'a pas été saisi (POST /api/auth/verify-2fa/).
+      email_envoye = envoyer_code(user, REGISTER)
+      data.update({
+          'requires_2fa': True,
+          'mfa_token': creer_mfa_token(user, REGISTER),
+          'purpose': REGISTER,
+          'email': masquer_email(user.email),
+          'expires_in': validite_minutes() * 60,
+          'detail': (
+              "Compte créé. Un code de confirmation a été envoyé à votre adresse e-mail."
+              if email_envoye else
+              "Compte créé, mais l'e-mail n'a pas pu être envoyé. "
+              "Demandez un nouveau code dans un instant."
+          ),
+      })
+    else:
+      envoyer_email_verification(user)
+      data['detail'] = "Compte créé. Un e-mail de confirmation vous a été envoyé."
     return Response(data, status=status.HTTP_201_CREATED)
+
+
+class Verify2FAView(generics.GenericAPIView):
+  """POST /api/auth/verify-2fa/ — {mfa_token, code} -> {access, refresh, user}.
+
+  Étape 2 de la connexion, ou confirmation de l'inscription (le compte est alors activé)."""
+  serializer_class = Verify2FASerializer
+  permission_classes = [permissions.AllowAny]
+  authentication_classes = []
+  throttle_classes = [AuthRateThrottle]
+
+  def post(self, request):
+    serializer = self.get_serializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    user = serializer.save()
+    return Response(Verify2FASerializer.jetons(user))
+
+
+class Resend2FAView(generics.GenericAPIView):
+  """POST /api/auth/resend-2fa/ — {mfa_token}. Renvoie un nouveau code (1 par minute max)."""
+  serializer_class = Renvoyer2FASerializer
+  permission_classes = [permissions.AllowAny]
+  authentication_classes = []
+  throttle_classes = [EmailRateThrottle]
+
+  def post(self, request):
+    serializer = self.get_serializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    user = serializer.validated_data['user']
+    if not envoyer_code(user, serializer.validated_data['purpose'], respecter_delai=True):
+      raise EmailIndisponible()
+    return Response({
+        'detail': 'Un nouveau code a été envoyé à votre adresse e-mail.',
+        'email': masquer_email(user.email),
+        'expires_in': validite_minutes() * 60,
+    })
 
 
 class MeView(APIView):

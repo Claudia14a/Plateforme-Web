@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core import signing
@@ -11,6 +12,18 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .emails import lire_token_verification
 from .models import ProfilEntreprise, ProfilEtudiant
+from .two_factor import (
+    EmailIndisponible,
+    LOGIN,
+    REGISTER,
+    creer_mfa_token,
+    deux_facteurs_actif,
+    envoyer_code,
+    lire_mfa_token,
+    masquer_email,
+    validite_minutes,
+    verifier_code,
+)
 from .validators import valider_logo, valider_pdf
 
 User = get_user_model()
@@ -31,11 +44,16 @@ class UserSerializer(serializers.ModelSerializer):
 # --------------------------------------------------------------------------
 
 class LoginSerializer(TokenObtainPairSerializer):
-  """Connexion JWT par espace.
+  """Connexion JWT par espace, avec double authentification par e-mail.
+
+  Étape 1 (cette classe) : {username, password, espace?}
+    - si TWO_FACTOR_ENABLED (défaut) : un code à 6 chiffres est envoyé par e-mail et la
+      réponse contient {requires_2fa: true, mfa_token, email, ...} -- AUCUN jeton JWT.
+    - sinon : réponse classique {access, refresh, user}.
+  Étape 2 : POST /api/auth/verify-2fa/ {mfa_token, code} -> {access, refresh, user}.
 
   `espace` (optionnel) : ETUDIANT, ENTREPRISE ou ADMIN. Si fourni, le compte doit
   appartenir à cet espace (connexion séparée pour les 3 profils).
-  La réponse contient `access`, `refresh` et `user` (dont le rôle).
   """
 
   espace = serializers.ChoiceField(choices=ESPACES, required=False, write_only=True)
@@ -50,8 +68,15 @@ class LoginSerializer(TokenObtainPairSerializer):
     espace = attrs.pop('espace', None)
     data = super().validate(attrs)  # identifiants incorrects -> 401
     user = self.user
+    double_facteur = deux_facteurs_actif()
 
-    if getattr(settings, 'EMAIL_VERIFICATION_REQUIRED', True) and not user.email_verifie:
+    # Avec la double authentification, le code reçu par e-mail prouve aussi que l'adresse
+    # est valide : on ne bloque donc plus ici les comptes « non vérifiés ».
+    if (
+        not double_facteur
+        and getattr(settings, 'EMAIL_VERIFICATION_REQUIRED', True)
+        and not user.email_verifie
+    ):
       raise exceptions.PermissionDenied({
           'detail': "Adresse e-mail non vérifiée. Consultez votre boîte mail.",
           'code': 'email_non_verifie',
@@ -68,8 +93,76 @@ class LoginSerializer(TokenObtainPairSerializer):
             'code': 'mauvais_espace',
         })
 
-    data['user'] = UserSerializer(user).data
-    return data
+    if not double_facteur:
+      data['user'] = UserSerializer(user).data
+      return data
+
+    # --- Double authentification : on n'émet PAS de jetons à cette étape -------------
+    if not user.email:
+      raise exceptions.PermissionDenied({
+          'detail': "Aucune adresse e-mail n'est associée à ce compte : "
+                    "impossible d'envoyer le code de connexion.",
+          'code': 'email_manquant',
+      })
+    if not envoyer_code(user, LOGIN):
+      raise EmailIndisponible()
+
+    return {
+        'requires_2fa': True,
+        'mfa_token': creer_mfa_token(user, LOGIN),
+        'purpose': LOGIN,
+        'email': masquer_email(user.email),
+        'expires_in': validite_minutes() * 60,
+        'detail': 'Un code de connexion a été envoyé à votre adresse e-mail.',
+    }
+
+
+class Verify2FASerializer(serializers.Serializer):
+  """Étape 2 : {mfa_token, code}. Sert à la connexion ET à la confirmation d'inscription."""
+
+  mfa_token = serializers.CharField()
+  code = serializers.CharField(max_length=6, min_length=6)
+
+  def validate_code(self, value):
+    value = value.strip()
+    if not value.isdigit():
+      raise serializers.ValidationError('Le code contient 6 chiffres.')
+    return value
+
+  def validate(self, attrs):
+    user, purpose = lire_mfa_token(attrs['mfa_token'])
+    verifier_code(user, purpose, attrs['code'])
+    attrs['user'] = user
+    attrs['purpose'] = purpose
+    return attrs
+
+  def save(self, **kwargs):
+    """Finalise : e-mail confirmé (inscription ou première connexion) + date de dernière connexion."""
+    user = self.validated_data['user']
+    if not user.email_verifie:
+      user.email_verifie = True
+      user.save(update_fields=['email_verifie'])
+    update_last_login(None, user)
+    return user
+
+  @staticmethod
+  def jetons(user):
+    refresh = LoginSerializer.get_token(user)  # contient le claim `role`
+    return {
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'user': UserSerializer(user).data,
+    }
+
+
+class Renvoyer2FASerializer(serializers.Serializer):
+  """{mfa_token} : demande un nouveau code (au plus un par minute)."""
+
+  mfa_token = serializers.CharField()
+
+  def validate(self, attrs):
+    attrs['user'], attrs['purpose'] = lire_mfa_token(attrs['mfa_token'])
+    return attrs
 
 
 # --------------------------------------------------------------------------

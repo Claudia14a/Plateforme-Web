@@ -63,3 +63,32 @@ def envoyer_email_reinitialisation(user):
       'votre mot de passe actuel reste valable.'
   )
   return _envoyer('Réinitialisation de votre mot de passe', message, user.email)
+
+
+# --- Double authentification (code à usage unique) ---------------------------
+
+def envoyer_email_code(user, code, purpose, validite_minutes):
+  """E-mail contenant le code à 6 chiffres (connexion ou inscription)."""
+  nom = user.get_full_name() or user.username
+  if purpose == 'REGISTER':
+    sujet = "Votre code de confirmation d'inscription"
+    intro = (
+        'Merci de votre inscription sur la plateforme de gestion des stages.\n'
+        'Pour confirmer votre adresse e-mail et activer votre compte, '
+        'saisissez ce code :'
+    )
+  else:
+    sujet = 'Votre code de connexion'
+    intro = (
+        'Une connexion à votre compte vient d\'être demandée.\n'
+        'Pour la terminer, saisissez ce code :'
+    )
+  message = (
+      f'Bonjour {nom},\n\n'
+      f'{intro}\n\n'
+      f'    {code}\n\n'
+      f'Ce code est valable {validite_minutes} minutes et ne peut être utilisé qu\'une seule fois.\n'
+      "Si vous n'êtes pas à l'origine de cette demande, ignorez ce message et "
+      'changez votre mot de passe. Ne communiquez jamais ce code à un tiers.'
+  )
+  return _envoyer(sujet, message, user.email)

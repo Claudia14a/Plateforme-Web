@@ -5,12 +5,16 @@ from utilisateurs.views import (
     MeView,
     PasswordResetConfirmView,
     PasswordResetRequestView,
+    Resend2FAView,
     ResendVerificationView,
+    Verify2FAView,
     VerifyEmailView,
 )
 
 urlpatterns = [
     path('login/', LoginView.as_view(), name='login'),
+    path('verify-2fa/', Verify2FAView.as_view(), name='verify-2fa'),
+    path('resend-2fa/', Resend2FAView.as_view(), name='resend-2fa'),
     path('refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('me/', MeView.as_view(), name='me'),
     path('verify-email/', VerifyEmailView.as_view(), name='verify-email'),

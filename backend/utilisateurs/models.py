@@ -76,3 +76,30 @@ class ProfilEntreprise(models.Model):
 
   def __str__(self):
     return f'{self.nom_entreprise} (Secteur: {self.secteur})'    
+
+
+class CodeVerification(models.Model):
+  """Code à usage unique (6 chiffres) envoyé par e-mail : double authentification
+  à la connexion (LOGIN) et confirmation de l'adresse à l'inscription (REGISTER).
+  Le code n'est jamais stocké en clair : seule son empreinte (HMAC) l'est."""
+
+  PURPOSE_CHOICES = (
+      ('LOGIN', 'Connexion'),
+      ('REGISTER', 'Inscription'),
+  )
+
+  user = models.ForeignKey(
+      User, on_delete=models.CASCADE, related_name='codes_verification'
+  )
+  purpose = models.CharField(max_length=10, choices=PURPOSE_CHOICES)
+  code_hash = models.CharField(max_length=64)
+  created_at = models.DateTimeField(auto_now_add=True)
+  expires_at = models.DateTimeField()
+  tentatives = models.PositiveSmallIntegerField(default=0)
+  utilise = models.BooleanField(default=False)
+
+  class Meta:
+    ordering = ['-created_at']
+
+  def __str__(self):
+    return f'{self.purpose} - {self.user.username} ({self.created_at:%d/%m/%Y %H:%M})'

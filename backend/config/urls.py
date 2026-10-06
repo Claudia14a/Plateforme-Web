@@ -11,4 +11,5 @@ urlpatterns = [
     path('api/candidatures/', include('candidatures.urls')),
     path('api/conventions/', include('conventions.urls')),
     path('api/notifications/', include('notifications.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    path('api/admin/', include('administration.urls')),  # tableau de bord, utilisateurs, journal, rapports
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)  # logos en développement (DEBUG)

@@ -1,0 +1,6 @@
+{% extends "notifications/email_base.html" %}
+{% block contenu %}
+<p>Bonne nouvelle : <strong>{{ entreprise_nom }}</strong> a accepté votre candidature pour « {{ offre_titre }} ».</p>
+{% if commentaire %}<p>Message de l'entreprise : « {{ commentaire }} »</p>{% endif %}
+<p>Votre convention de stage est en cours de préparation. Vous serez prévenu(e) dès qu'elle sera prête.</p>
+{% endblock %}

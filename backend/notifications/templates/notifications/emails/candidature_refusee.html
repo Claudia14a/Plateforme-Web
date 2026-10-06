@@ -1,0 +1,6 @@
+{% extends "notifications/email_base.html" %}
+{% block contenu %}
+<p><strong>{{ entreprise_nom }}</strong> n'a pas retenu votre candidature pour « {{ offre_titre }} ».</p>
+{% if commentaire %}<p>Motif indiqué : « {{ commentaire }} »</p>{% endif %}
+<p>Ne vous découragez pas : d'autres offres sont disponibles sur la plateforme.</p>
+{% endblock %}

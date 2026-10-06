@@ -54,3 +54,22 @@ class IsEntrepriseOrAdmin(permissions.BasePermission):
       return True
     proprietaire = getattr(obj, 'user', None) or getattr(obj, 'entreprise', None)
     return proprietaire == request.user
+
+
+class IsAdminRole(permissions.BasePermission):
+  """Réservé aux administrateurs (rôle ADMIN ou compte staff)."""
+
+  def has_permission(self, request, view):
+    u = request.user
+    return bool(u and u.is_authenticated and (u.is_staff or u.role == 'ADMIN'))
+
+
+class IsEntrepriseOuAdminRole(permissions.BasePermission):
+  """Entreprise ou administrateur. Pas de contrôle objet : le queryset de la vue
+  limite déjà ce que chacun peut atteindre."""
+
+  def has_permission(self, request, view):
+    u = request.user
+    return bool(
+        u and u.is_authenticated and (u.is_staff or u.role in ('ENTREPRISE', 'ADMIN'))
+    )

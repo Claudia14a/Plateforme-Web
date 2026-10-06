@@ -118,7 +118,7 @@ class CandidaturesRecuesViewSet(
   def get_queryset(self):
     return (
         Candidature.objects.filter(offre__entreprise=self.request.user)
-        .select_related('etudiant__profil_etudiant', 'offre', 'evaluation')
+        .select_related('etudiant__profil_etudiant', 'offre', 'evaluation', 'convention')
         .order_by('-date_candidature')
     )
 
@@ -132,14 +132,18 @@ class CandidaturesRecuesViewSet(
     donnees = DecisionSerializer(data=request.data)
     donnees.is_valid(raise_exception=True)
     candidature.statut = nouveau_statut
+    candidature._acteur = request.user  # pour le journal d'audit (voir signals.py)
+    candidature._date_debut_souhaitee = donnees.validated_data.get('date_debut')
     candidature.commentaire_entreprise = donnees.validated_data.get('commentaire', '')
     candidature.date_decision = timezone.now()
     candidature.save(update_fields=['statut', 'commentaire_entreprise', 'date_decision'])
+    candidature.refresh_from_db()  # la convention vient d'être créée par le signal
     return Response(self.get_serializer(candidature).data)
 
   @action(detail=True, methods=['post'])
   def accepter(self, request, pk=None):
-    """POST .../recues/<id>/accepter/  {"commentaire": "..."} (facultatif)"""
+    """POST .../recues/<id>/accepter/  {"commentaire": "...", "date_debut": "AAAA-MM-JJ"} (tout est facultatif).
+    La convention de stage est alors créée et remplie automatiquement."""
     return self._decider(request, Candidature.Statut.ACCEPTEE)
 
   @action(detail=True, methods=['post'])

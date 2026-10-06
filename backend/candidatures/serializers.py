@@ -69,8 +69,11 @@ class CandidatureEtudiantSerializer(serializers.ModelSerializer):
       return None
     return {
         'id': convention.id,
+        'numero': convention.numero,
         'statut': convention.statut,
         'statut_libelle': convention.get_statut_display(),
+        'date_debut': convention.date_debut,
+        'date_fin': convention.date_fin,
         'telechargeable': convention.est_telechargeable,
     }
 
@@ -150,7 +153,7 @@ class CandidatureRecueSerializer(CandidatureEtudiantSerializer):
     fields = (
         'id', 'offre', 'etudiant', 'statut', 'statut_libelle', 'message',
         'commentaire_entreprise', 'date_candidature', 'date_decision',
-        'cv_url', 'lettre_url', 'evaluation',
+        'cv_url', 'lettre_url', 'convention', 'evaluation',
     )
     read_only_fields = fields
 
@@ -180,3 +183,11 @@ class CandidatureRecueSerializer(CandidatureEtudiantSerializer):
 class DecisionSerializer(serializers.Serializer):
   """Corps des actions accepter / refuser."""
   commentaire = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+  # Facultatif, à l'acceptation : sinon la convention prend automatiquement le
+  # premier lundi situé au moins 14 jours plus tard.
+  date_debut = serializers.DateField(required=False)
+
+  def validate_date_debut(self, value):
+    if value < timezone.localdate():
+      raise serializers.ValidationError('La date de début ne peut pas être dans le passé.')
+    return value

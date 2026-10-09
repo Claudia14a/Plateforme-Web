@@ -4,6 +4,8 @@ from rest_framework import permissions
 class IsEtudiant(permissions.BasePermission):
   """Réservé aux comptes ayant le rôle ETUDIANT."""
 
+  message = 'Seuls les comptes étudiants peuvent postuler à une offre.'
+
   def has_permission(self, request, view):
     return bool(
         request.user and request.user.is_authenticated and request.user.role == 'ETUDIANT'

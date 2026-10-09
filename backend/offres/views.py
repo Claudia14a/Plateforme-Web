@@ -6,14 +6,26 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from offres.filters import OffreStageFilter
 from offres.models import OffreStage
 from offres.serializers import OffreStageDetailSerializer, OffreStageSerializer
+from utilisateurs.authentication import JWTAuthenticationOptionnelle
 from utilisateurs.permissions import IsEntreprise, IsEntrepriseOrAdmin
+
+# Actions ouvertes à tous, y compris aux visiteurs non connectés
+ACTIONS_PUBLIQUES = ('list', 'retrieve')
+
+
+class LecturePubliqueThrottle(AnonRateThrottle):
+  """Limite les visiteurs anonymes (anti-aspiration) : 120 requêtes/minute par adresse IP.
+  Ne concerne pas les utilisateurs connectés."""
+  scope = 'offres_publiques'
+  rate = '120/min'
 
 
 def _est_admin(user):
-  return user.is_staff or user.role == 'ADMIN'
+  return bool(user.is_authenticated and (user.is_staff or getattr(user, 'role', None) == 'ADMIN'))
 
 
 class OffreStageViewSet(viewsets.ModelViewSet):
@@ -23,6 +35,19 @@ class OffreStageViewSet(viewsets.ModelViewSet):
   # Tri : ?ordering=-date_creation | duree_mois | -duree_mois | date_limite
   ordering_fields = ['date_creation', 'duree_mois', 'date_limite']
   ordering = ['-date_creation']
+
+  def get_authenticators(self):
+    # Consultation publique : un token absent ou expiré n'empêche pas de voir les offres.
+    # Toutes les autres actions gardent l'authentification JWT stricte.
+    action = self.action_map.get(self.request.method.lower())
+    if action in ACTIONS_PUBLIQUES:
+      return [JWTAuthenticationOptionnelle()]
+    return super().get_authenticators()
+
+  def get_throttles(self):
+    if self.action in ACTIONS_PUBLIQUES:
+      return [LecturePubliqueThrottle()]
+    return super().get_throttles()
 
   def get_queryset(self):
     user = self.request.user
@@ -34,11 +59,14 @@ class OffreStageViewSet(viewsets.ModelViewSet):
 
     if _est_admin(user):
       return qs
-    if self.action in ('list', 'retrieve'):
-      # Offres ouvertes (actives et non expirées) pour tous
-      # + toutes ses propres offres pour une entreprise
-      visibles = Q(active=True, date_limite__gte=timezone.localdate()) | Q(entreprise=user)
+
+    # Offres ouvertes : actives et non expirées (seules visibles par les visiteurs et les étudiants)
+    visibles = Q(active=True, date_limite__gte=timezone.localdate())
+    if not user.is_authenticated:
       return qs.filter(visibles)
+    if self.action in ACTIONS_PUBLIQUES:
+      # une entreprise voit en plus toutes ses propres offres (clôturées ou expirées)
+      return qs.filter(visibles | Q(entreprise=user))
     # mes-offres / modifier / clôturer / supprimer : uniquement ses propres offres
     return qs.filter(entreprise=user)
 
@@ -49,8 +77,8 @@ class OffreStageViewSet(viewsets.ModelViewSet):
     return OffreStageSerializer
 
   def get_permissions(self):
-    if self.action in ['list', 'retrieve']:
-      permission_classes = [permissions.IsAuthenticated]
+    if self.action in ACTIONS_PUBLIQUES:
+      permission_classes = [permissions.AllowAny]  # consulter les offres : sans compte
     elif self.action == 'mes_offres':
       permission_classes = [permissions.IsAuthenticated, IsEntreprise]
     else:

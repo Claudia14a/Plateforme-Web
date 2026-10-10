@@ -318,6 +318,7 @@ class ProfilEtudiantSerializer(_NomsUtilisateurMixin, serializers.ModelSerialize
         'niveau_etudes',
         'competences',
         'cv',
+        'profil_public',
         'date_Mise_a_jour',
     )
     read_only_fields = ('id', 'date_Mise_a_jour')
@@ -364,3 +365,53 @@ class ProfilEntrepriseSerializer(serializers.ModelSerializer):
 
   def validate_logo(self, fichier):
     return valider_logo(fichier) if fichier else fichier
+
+
+# --------------------------------------------------------------------------
+# Annuaires publics (visiteurs non connectés) : champs strictement limités
+# --------------------------------------------------------------------------
+
+class ProfilEntreprisePublicSerializer(serializers.ModelSerializer):
+  """Fiche publique d'une entreprise : aucune donnée personnelle du compte (ni e-mail,
+  ni identifiant de connexion, ni nom de la personne qui gère le compte)."""
+
+  user = serializers.SerializerMethodField()  # {"id": ...} : valeur du champ « entreprise » d'une offre
+  nb_offres_ouvertes = serializers.IntegerField(read_only=True)
+
+  class Meta:
+    model = ProfilEntreprise
+    fields = (
+        'id', 'user', 'nom_entreprise', 'secteur', 'description', 'logo',
+        'site_web', 'telephone', 'adresse', 'nb_offres_ouvertes',
+    )
+    read_only_fields = fields
+
+  def get_user(self, obj):
+    return {'id': obj.user_id}
+
+
+class ProfilEtudiantPublicSerializer(serializers.ModelSerializer):
+  """Fiche publique d'un étudiant : prénom + initiale du nom, formation, niveau, compétences.
+  Jamais l'e-mail, le téléphone, le CV, l'identifiant de connexion ni le nom complet."""
+
+  nom_affiche = serializers.SerializerMethodField()
+  competences_liste = serializers.SerializerMethodField()
+
+  class Meta:
+    model = ProfilEtudiant
+    fields = (
+        'id', 'nom_affiche', 'formation', 'niveau_etudes',
+        'competences', 'competences_liste', 'date_Mise_a_jour',
+    )
+    read_only_fields = fields
+
+  def get_nom_affiche(self, obj):
+    prenom = (obj.user.first_name or '').strip()
+    nom = (obj.user.last_name or '').strip()
+    if prenom and nom:
+      return f'{prenom} {nom[0].upper()}.'
+    return prenom or 'Étudiant'
+
+  def get_competences_liste(self, obj):
+    return [c.strip() for c in (obj.competences or '').split(',') if c.strip()]
+

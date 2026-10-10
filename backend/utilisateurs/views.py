@@ -1,7 +1,10 @@
+from django.db.models import Count, Q
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import generics, permissions, status, viewsets
+from rest_framework import generics, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.filters import OrderingFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -19,13 +22,18 @@ from utilisateurs.two_factor import (
     masquer_email,
     validite_minutes,
 )
+from utilisateurs.authentication import JWTAuthenticationOptionnelle
+from utilisateurs.filters import EtudiantPublicFilter, ProfilEntrepriseFilter
 from utilisateurs.models import ProfilEntreprise, ProfilEtudiant, User
 from utilisateurs.permissions import IsEntrepriseOrAdmin, IsEtudiant, IsEtudiantOrAdmin
+from utilisateurs.throttles import ProfilsPublicsThrottle
 from utilisateurs.serializers import (
     EmailSerializer,
     LoginSerializer,
     PasswordResetConfirmSerializer,
+    ProfilEntreprisePublicSerializer,
     ProfilEntrepriseSerializer,
+    ProfilEtudiantPublicSerializer,
     ProfilEtudiantSerializer,
     RegisterSerializer,
     Renvoyer2FASerializer,
@@ -247,18 +255,54 @@ class EntreprisePagination(PageNumberPagination):
   max_page_size = 100
 
 
+ACTIONS_PUBLIQUES = ('list', 'retrieve')
+
+
 class ProfilEntrepriseViewSet(viewsets.ModelViewSet):
+  """Annuaire des entreprises : consultation ouverte à tous (même sans compte),
+  création / modification réservées à l'entreprise concernée ou à un admin."""
+
   queryset = ProfilEntreprise.objects.select_related('user').order_by('nom_entreprise')
   serializer_class = ProfilEntrepriseSerializer
   parser_classes = (MultiPartParser, FormParser)
   pagination_class = EntreprisePagination
   filter_backends = [DjangoFilterBackend]
-  filterset_fields = ['secteur', 'nom_entreprise']
+  filterset_class = ProfilEntrepriseFilter  # ?secteur= ?nom_entreprise= ?q=
+
+  def get_authenticators(self):
+    # Un token absent ou expiré n'empêche pas de consulter l'annuaire
+    action = self.action_map.get(self.request.method.lower())
+    if action in ACTIONS_PUBLIQUES:
+      return [JWTAuthenticationOptionnelle()]
+    return super().get_authenticators()
+
+  def get_throttles(self):
+    if self.action in ACTIONS_PUBLIQUES:
+      return [ProfilsPublicsThrottle()]
+    return super().get_throttles()
+
+  def get_queryset(self):
+    queryset = ProfilEntreprise.objects.select_related('user').order_by('nom_entreprise')
+    if self.action in ACTIONS_PUBLIQUES:
+      aujourdhui = timezone.localdate()
+      queryset = queryset.filter(user__is_active=True).annotate(
+          nb_offres_ouvertes=Count(
+              'user__offres_publier', distinct=True,
+              filter=Q(user__offres_publier__active=True, user__offres_publier__date_limite__gte=aujourdhui),
+          )
+      )
+    return queryset
+
+  def get_serializer_class(self):
+    # Fiche publique (sans e-mail ni identifiant) pour la consultation ;
+    # fiche complète pour le propriétaire (/me/) et les modifications.
+    if self.action in ACTIONS_PUBLIQUES:
+      return ProfilEntreprisePublicSerializer
+    return ProfilEntrepriseSerializer
 
   def get_permissions(self):
-    # Tout utilisateur authentifié peut consulter la liste des entreprises et leurs profils
-    if self.action in ['list', 'retrieve']:
-      permission_classes = [permissions.IsAuthenticated]
+    if self.action in ACTIONS_PUBLIQUES:
+      permission_classes = [permissions.AllowAny]
     else:
       # Seule l'entreprise concernée ou un admin peut créer/modifier/supprimer
       permission_classes = [permissions.IsAuthenticated, IsEntrepriseOrAdmin]
@@ -286,3 +330,31 @@ class ProfilEntrepriseViewSet(viewsets.ModelViewSet):
     serializer.is_valid(raise_exception=True)
     serializer.save()
     return Response(serializer.data)
+
+
+class EtudiantPublicViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+  """Annuaire public des étudiants : GET /api/utilisateurs/etudiants/ (même sans compte).
+
+  Ne montre que les étudiants dont le profil est public (par défaut) et renseigné, et
+  uniquement : prénom + initiale, formation, niveau, compétences. Jamais e-mail, téléphone, CV.
+  Filtres : ?formation= ?niveau_etudes= ?competences= ?q=  — tri : ?ordering=-date_Mise_a_jour
+  """
+
+  serializer_class = ProfilEtudiantPublicSerializer
+  permission_classes = [permissions.AllowAny]
+  authentication_classes = [JWTAuthenticationOptionnelle]
+  throttle_classes = [ProfilsPublicsThrottle]
+  pagination_class = EntreprisePagination
+  filter_backends = [DjangoFilterBackend, OrderingFilter]
+  filterset_class = EtudiantPublicFilter
+  ordering_fields = ['date_Mise_a_jour', 'formation']
+  ordering = ['-date_Mise_a_jour']
+
+  def get_queryset(self):
+    return (
+        ProfilEtudiant.objects.select_related('user')
+        .filter(profil_public=True, user__is_active=True, user__role='ETUDIANT')
+        .filter(Q(formation__gt='') | Q(competences__gt=''))  # ignore les profils vides
+        .order_by('-date_Mise_a_jour')
+    )
+

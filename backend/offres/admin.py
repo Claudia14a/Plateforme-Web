@@ -1,5 +1,5 @@
 from django.contrib import admin
-from offres.models import OffreStage
+from offres.models import Categorie, OffreStage
 
 
 def _libelle_entreprise(user):
@@ -7,10 +7,17 @@ def _libelle_entreprise(user):
   return profil.nom_entreprise if profil else user.username
 
 
+@admin.register(Categorie)
+class CategorieAdmin(admin.ModelAdmin):
+  list_display = ('nom', 'slug')
+  search_fields = ('nom',)
+  prepopulated_fields = {'slug': ('nom',)}
+
+
 @admin.register(OffreStage)
 class OffreStageAdmin(admin.ModelAdmin):
-  list_display = ('titre', 'entreprise_nom', 'ville', 'duree_mois', 'date_limite', 'active')
-  list_filter = ('active', 'ville', 'domaine')
+  list_display = ('titre', 'entreprise_nom', 'categorie', 'ville', 'duree_mois', 'date_limite', 'active')
+  list_filter = ('active', 'categorie', 'ville', 'domaine')
   search_fields = ('titre', 'domaine', 'ville')
 
   @admin.display(description='Entreprise')

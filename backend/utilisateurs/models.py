@@ -48,6 +48,9 @@ class ProfilEtudiant(models.Model):
       blank=True, null=True
   )  # Ex: Python, Django, React, Réseaux
   cv = models.FileField(upload_to=user_cv_path, blank=True, null=True)
+  # Apparaît dans l'annuaire public des étudiants (prénom + initiale, formation, niveau,
+  # compétences uniquement : jamais l'e-mail, le téléphone ni le CV). L'étudiant peut le désactiver.
+  profil_public = models.BooleanField(default=True)
   date_Mise_a_jour = models.DateTimeField(auto_now=True)
 
   def __str__(self):

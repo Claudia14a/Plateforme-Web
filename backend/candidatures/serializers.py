@@ -14,6 +14,11 @@ def _nom_entreprise(user):
   return profil.nom_entreprise if profil else user.username
 
 
+def _categorie(offre):
+  c = offre.categorie
+  return {'id': c.id, 'nom': c.nom, 'slug': c.slug} if c else None
+
+
 # --------------------------------------------------------------------------
 # Étudiant
 # --------------------------------------------------------------------------
@@ -60,6 +65,7 @@ class CandidatureEtudiantSerializer(serializers.ModelSerializer):
         'date_limite': o.date_limite,
         'active': o.active,
         'entreprise_nom': _nom_entreprise(o.entreprise),
+        'categorie': _categorie(o),
     }
 
   def get_convention(self, obj):
@@ -158,7 +164,11 @@ class CandidatureRecueSerializer(CandidatureEtudiantSerializer):
     read_only_fields = fields
 
   def get_offre(self, obj):
-    return {'id': obj.offre_id, 'titre': obj.offre.titre}
+    return {
+        'id': obj.offre_id,
+        'titre': obj.offre.titre,
+        'categorie': _categorie(obj.offre),
+    }
 
   def get_etudiant(self, obj):
     user = obj.etudiant

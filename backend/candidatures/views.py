@@ -10,6 +10,7 @@ from rest_framework.filters import OrderingFilter
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
+from candidatures.filters import CandidatureFilter
 from candidatures.models import Candidature
 from candidatures.serializers import (
     CandidatureCreateSerializer,
@@ -60,20 +61,20 @@ class MesCandidaturesViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet,
 ):
-  """Postuler, suivre ses candidatures (filtre ?statut=), consulter l'historique
+  """Postuler, suivre ses candidatures (filtres ?statut= et ?categorie=), consulter l'historique
   et retirer une candidature encore en attente."""
 
   permission_classes = [permissions.IsAuthenticated, IsEtudiant]
   parser_classes = (MultiPartParser, FormParser)
   filter_backends = [DjangoFilterBackend, OrderingFilter]
-  filterset_fields = ['statut', 'offre']
+  filterset_class = CandidatureFilter
   ordering_fields = ['date_candidature', 'statut']
   ordering = ['-date_candidature']
 
   def get_queryset(self):
     return (
         Candidature.objects.filter(etudiant=self.request.user)
-        .select_related('offre__entreprise__profil_entreprise', 'convention')
+        .select_related('offre__entreprise__profil_entreprise', 'offre__categorie', 'convention')
         .order_by('-date_candidature')
     )
 
@@ -106,19 +107,19 @@ class CandidaturesRecuesViewSet(
     viewsets.GenericViewSet,
 ):
   """Candidatures reçues sur les offres de l'entreprise connectée.
-  Filtres : ?offre=<id>&statut=EN_ATTENTE|ACCEPTEE|REFUSEE"""
+  Filtres : ?offre=<id>&statut=EN_ATTENTE|ACCEPTEE|REFUSEE&categorie=<id|slug>"""
 
   permission_classes = [permissions.IsAuthenticated, IsEntreprise]
   serializer_class = CandidatureRecueSerializer
   filter_backends = [DjangoFilterBackend, OrderingFilter]
-  filterset_fields = ['statut', 'offre']
+  filterset_class = CandidatureFilter
   ordering_fields = ['date_candidature', 'statut']
   ordering = ['-date_candidature']
 
   def get_queryset(self):
     return (
         Candidature.objects.filter(offre__entreprise=self.request.user)
-        .select_related('etudiant__profil_etudiant', 'offre', 'evaluation', 'convention')
+        .select_related('etudiant__profil_etudiant', 'offre__categorie', 'evaluation', 'convention')
         .order_by('-date_candidature')
     )
 

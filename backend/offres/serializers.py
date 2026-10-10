@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import serializers
-from offres.models import OffreStage
+from offres.models import Categorie, OffreStage
 
 User = get_user_model()
 
@@ -49,12 +49,34 @@ class EntrepriseResumeSerializer(serializers.ModelSerializer):
     return request.build_absolute_uri(url) if request else url
 
 
+class CategorieSerializer(serializers.ModelSerializer):
+  # Nombre d'offres ouvertes dans la catégorie (calculé par la vue)
+  nb_offres = serializers.IntegerField(read_only=True)
+
+  class Meta:
+    model = Categorie
+    fields = ('id', 'nom', 'slug', 'description', 'nb_offres')
+    read_only_fields = ('id', 'slug', 'nb_offres')
+
+
+class CategorieResumeSerializer(serializers.ModelSerializer):
+  class Meta:
+    model = Categorie
+    fields = ('id', 'nom', 'slug')
+    read_only_fields = fields
+
+
 class OffreStageSerializer(serializers.ModelSerializer):
   # Rempli automatiquement pour une entreprise ; un admin doit le fournir (id du User).
   entreprise = serializers.PrimaryKeyRelatedField(
       queryset=User.objects.filter(role='ENTREPRISE'), required=False
   )
   entreprise_nom = serializers.SerializerMethodField()
+  # Catégorie : id en écriture (obligatoire à la création), nom en lecture
+  categorie = serializers.PrimaryKeyRelatedField(
+      queryset=Categorie.objects.all(), required=False, allow_null=True
+  )
+  categorie_nom = serializers.CharField(source='categorie.nom', read_only=True, default=None)
   # Nombre de candidatures reçues (calculé par la vue ; absent juste après une création)
   nb_candidatures = serializers.IntegerField(read_only=True)
 
@@ -64,6 +86,8 @@ class OffreStageSerializer(serializers.ModelSerializer):
         'id',
         'entreprise',
         'entreprise_nom',
+        'categorie',
+        'categorie_nom',
         'titre',
         'description',
         'domaine',
@@ -92,10 +116,17 @@ class OffreStageSerializer(serializers.ModelSerializer):
       raise serializers.ValidationError('La durée doit être d\'au moins 1 mois.')
     return value
 
+  def validate(self, attrs):
+    # À la création, la catégorie est obligatoire (les anciennes offres peuvent en être dépourvues)
+    if self.instance is None and not attrs.get('categorie'):
+      raise serializers.ValidationError({'categorie': 'Choisissez une catégorie.'})
+    return attrs
+
 
 class OffreStageDetailSerializer(serializers.ModelSerializer):
   entreprise = EntrepriseResumeSerializer(read_only=True)
   entreprise_nom = serializers.SerializerMethodField()
+  categorie = CategorieResumeSerializer(read_only=True)
   nb_candidatures = serializers.IntegerField(read_only=True)
 
   class Meta:
@@ -104,6 +135,7 @@ class OffreStageDetailSerializer(serializers.ModelSerializer):
         'id',
         'entreprise',
         'entreprise_nom',
+        'categorie',
         'titre',
         'description',
         'domaine',

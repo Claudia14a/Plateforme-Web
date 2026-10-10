@@ -8,13 +8,22 @@ from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from offres.filters import OffreStageFilter
-from offres.models import OffreStage
-from offres.serializers import OffreStageDetailSerializer, OffreStageSerializer
+from offres.models import Categorie, OffreStage
+from offres.serializers import (
+    CategorieSerializer,
+    OffreStageDetailSerializer,
+    OffreStageSerializer,
+)
 from utilisateurs.authentication import JWTAuthenticationOptionnelle
 from utilisateurs.permissions import IsEntreprise, IsEntrepriseOrAdmin
 
 # Actions ouvertes à tous, y compris aux visiteurs non connectés
 ACTIONS_PUBLIQUES = ('list', 'retrieve')
+
+
+class EstAdmin(permissions.BasePermission):
+  def has_permission(self, request, view):
+    return _est_admin(request.user)
 
 
 class LecturePubliqueThrottle(AnonRateThrottle):
@@ -52,7 +61,7 @@ class OffreStageViewSet(viewsets.ModelViewSet):
   def get_queryset(self):
     user = self.request.user
     qs = (
-        OffreStage.objects.select_related('entreprise__profil_entreprise')
+        OffreStage.objects.select_related('entreprise__profil_entreprise', 'categorie')
         .annotate(nb_candidatures=Count('candidatures'))
         .order_by('-date_creation')
     )
@@ -138,3 +147,32 @@ class OffreStageViewSet(viewsets.ModelViewSet):
     offre.active = True
     offre.save(update_fields=['active'])
     return Response(self.get_serializer(offre).data)
+
+
+class CategorieViewSet(viewsets.ModelViewSet):
+  """Catégories d'offres.
+  GET /api/offres/categories/ (public, non paginé) : id, nom, slug, nb_offres (offres ouvertes).
+  Création / modification / suppression : administrateurs uniquement."""
+
+  serializer_class = CategorieSerializer
+  pagination_class = None
+
+  def get_authenticators(self):
+    action = self.action_map.get(self.request.method.lower())
+    if action in ACTIONS_PUBLIQUES:
+      return [JWTAuthenticationOptionnelle()]
+    return super().get_authenticators()
+
+  def get_throttles(self):
+    if self.action in ACTIONS_PUBLIQUES:
+      return [LecturePubliqueThrottle()]
+    return super().get_throttles()
+
+  def get_permissions(self):
+    if self.action in ACTIONS_PUBLIQUES:
+      return [permissions.AllowAny()]
+    return [permissions.IsAuthenticated(), EstAdmin()]
+
+  def get_queryset(self):
+    ouvertes = Q(offres__active=True, offres__date_limite__gte=timezone.localdate())
+    return Categorie.objects.annotate(nb_offres=Count('offres', filter=ouvertes)).order_by('nom')
